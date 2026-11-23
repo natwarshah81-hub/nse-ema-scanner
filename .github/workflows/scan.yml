@@ -2,10 +2,9 @@ name: NSE 44 EMA scan
 
 on:
   schedule:
-    - cron: "*/5 3-10 * * 1-5"
-    - cron: "30 12 * * 1-5"
+    - cron: "*/5 * * * *"
   workflow_dispatch: {}
-
+  
 permissions:
   contents: read
   pages: write
