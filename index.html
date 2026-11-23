@@ -10,7 +10,7 @@ h1{margin:0;font-size:20px}.sub{color:var(--mute);font-size:13px;margin-top:4px}
 .right{display:flex;gap:10px;align-items:center;color:var(--mute);font-size:13px}
 button{background:var(--acc);color:#0b1220;border:0;border-radius:8px;padding:8px 14px;font-weight:600;cursor:pointer}
 button:disabled{opacity:.6;cursor:wait}
-.tfs{display:flex;gap:6px;padding:10px 24px 0;flex-wrap:wrap}
+.tfs{display:flex;gap:10px;padding:10px 24px 0;flex-wrap:wrap;align-items:center}
 .tf{background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:7px 14px;cursor:pointer;font-weight:600}
 .tf.on{background:var(--acc);color:#0b1220;border-color:var(--acc)}
 .kpis{display:flex;gap:12px;padding:14px 24px 4px;flex-wrap:wrap}
@@ -33,17 +33,31 @@ tr:hover td{background:#1c212a}.up{color:var(--up)}.dn{color:var(--dn)}
 a{color:var(--acc);text-decoration:none}.name{color:var(--mute);font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;display:block}
 .meter{display:inline-block;width:56px;height:6px;background:#2a313c;border-radius:3px;vertical-align:middle;margin-left:6px;overflow:hidden}
 .meter i{display:block;height:100%}
+.glob{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px;padding:14px 24px 0}
+.gc{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.gh{display:flex;justify-content:space-between;align-items:baseline;gap:8px}.gh b{font-size:16px}.gh small{color:var(--mute);font-size:12px}
+.gm{display:flex;gap:18px;align-items:baseline;margin:8px 0 10px;flex-wrap:wrap}.gm .px{font-size:22px;font-weight:700}
+.gm span{color:var(--mute);font-size:12px}.gm span i{font-style:normal;color:var(--text)}
+.tag.NONE{background:#2a313c;color:#c3cad4}
+.chips{display:flex;gap:6px;flex-wrap:wrap}.chip{font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--line);cursor:pointer;background:#1b2027}
+.chip.ABOVE{color:#86efac;border-color:#1f5f39}.chip.BELOW{color:#fca5a5;border-color:#6b2424}.chip.NONE{color:var(--mute)}
+.chip.on{outline:2px solid var(--acc)}
+.modes{display:flex;gap:6px;align-items:center;margin-left:auto;color:var(--mute);font-size:13px}
+.md{background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:7px 12px;font-weight:600;cursor:pointer}
+.md.on{background:#f59e0b;color:#1a1204;border-color:#f59e0b}.md.on[data-m=closed]{background:#e6e9ee;color:#0f1216;border-color:#e6e9ee}
 .foot{color:var(--mute);font-size:12px;padding:0 24px 28px;line-height:1.6}
 </style></head><body>
 <header>
  <div><h1>NSE Candle vs 44 EMA</h1><div class="sub" id="sub">Loading…</div></div>
  <div class="right"><span id="countdown"></span><button id="refresh">↻ Refresh now</button></div>
 </header>
-<div class="tfs" id="tfs"></div>
+<div class="tfs"><div id="tfs" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+ <div class="modes"><span>Candle:</span><button class="md" data-m="closed" title="Last finished candle: the signal can no longer change">Closed</button><button class="md" data-m="live" title="Candle still forming right now, like TradingView's last candle: can change until it closes">Live (forming)</button></div></div>
+<div class="glob" id="glob"></div>
 <div class="kpis">
  <div class="kpi" data-side="ALL"><b id="kAll">–</b><span>Qualified stocks</span></div>
- <div class="kpi" data-side="ABOVE"><b class="up" id="kUp">–</b><span>Closed above 44 EMA</span></div>
- <div class="kpi" data-side="BELOW"><b class="dn" id="kDn">–</b><span>Closed below 44 EMA</span></div>
+ <div class="kpi" data-side="ABOVE"><b class="up" id="kUp">–</b><span>Above 44 EMA</span></div>
+ <div class="kpi" data-side="BELOW"><b class="dn" id="kDn">–</b><span>Below 44 EMA</span></div>
  <div class="kpi" data-side="FRESH"><b id="kFresh">–</b><span>Fresh crosses</span></div>
 </div>
 <div class="bar">
@@ -60,9 +74,9 @@ a{color:var(--acc);text-decoration:none}.name{color:var(--mute);font-size:12px;m
 <div class="note" id="note"></div>
 <div class="wrap"><table><thead><tr id="hdr"></tr></thead><tbody id="tb"></tbody></table></div>
 <div class="foot">
- <b>Rule:</b> the last <i>completed</i> candle of the chosen timeframe closed beyond the 44 EMA with at least the minimum % of its body (|close − open|) on that side.
+ <b>Closed</b> judges the last finished candle (final). <b>Live</b> judges the candle still forming — the same candle TradingView shows last — so it can change until that candle closes. <b>Rule:</b> the candle's close is beyond the 44 EMA with at least the minimum % of its body (|close − open|) on that side.
  <b>Fresh</b> = previous candle closed on the other side of the EMA. <b>EMA slope</b> = % change of the EMA over the last 5 candles.
- Intraday timeframes cover Nifty 500 stocks; Daily and Weekly cover all NSE equities. Candles are anchored at 09:15 IST.
+ <b>BTC &amp; XAU</b> always show their status (▲ above, ▼ below, – no signal); their candles use UTC days (00:00 UTC open), like TradingView. Gold uses Yahoo's XAUUSD feed, or COMEX gold futures (GC=F) if that is unavailable. Intraday timeframes cover Nifty 500 stocks; Daily and Weekly cover all NSE equities. Candles are anchored at 09:15 IST.
  Data: Yahoo Finance, updated by an automatic scan about every 5 minutes during market hours (GitHub can delay scheduled scans by a few minutes). Not investment advice.
  <span id="runlink"></span>
 </div>
@@ -74,7 +88,7 @@ const cols=[["s","Symbol"],["n","Company"],["side","Signal"],["c","Close"],["e",
 const $=id=>document.getElementById(id);
 const store={get(k,d){try{const v=localStorage.getItem("ema44."+k);return v==null?d:JSON.parse(v)}catch(e){return d}},
  set(k,v){try{localStorage.setItem("ema44."+k,JSON.stringify(v))}catch(e){}}};
-let DATA=null,tf=store.get("tf","1D"),sortK="b",sortD=-1,nextAt=0;
+let DATA=null,mode=store.get("mode","closed"),tf=store.get("tf","1D"),sortK="b",sortD=-1,nextAt=0;
 const fmt=(v,d=2)=>v==null?"–":Number(v).toLocaleString("en-IN",{maximumFractionDigits:d,minimumFractionDigits:d});
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const ist=iso=>new Date(iso).toLocaleString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false});
@@ -90,13 +104,14 @@ document.querySelectorAll(".kpi").forEach(k=>k.onclick=()=>{const s=k.dataset.si
 $("uni").value=store.get("uni","2");
 ["q","side","uni","minBody","minPx","minVol","fresh","trend"].forEach(id=>$(id).addEventListener("input",()=>{store.set("uni",$("uni").value);render()}));
 $("refresh").onclick=()=>load(true);
+document.querySelectorAll(".md").forEach(b=>b.onclick=()=>{mode=b.dataset.m;store.set("mode",mode);load(true)});
 const m=location.hostname.match(/^([^.]+)\.github\.io$/),repo=location.pathname.split("/")[1];
 if(m&&repo)$("runlink").innerHTML=` · <a target="_blank" href="https://github.com/${m[1]}/${repo}/actions/workflows/scan.yml">Run a fresh scan on GitHub</a>`;
 
 async function load(manual){
  $("refresh").disabled=true;$("refresh").textContent="Refreshing…";
  try{
-  const r=await fetch("data.json?t="+Date.now(),{cache:"no-store"});
+  const r=await fetch((mode==="live"?"live.json":"data.json")+"?t="+Date.now(),{cache:"no-store"});
   if(!r.ok)throw new Error("HTTP "+r.status);
   DATA=await r.json();render();
  }catch(e){
@@ -109,6 +124,23 @@ setInterval(()=>{const s=Math.max(0,Math.round((nextAt-Date.now())/1000));
  $("countdown").textContent=nextAt?`Auto-refresh in ${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`:"";
  if(nextAt&&s===0){nextAt=0;load()}},1000);
 
+
+function renderGlobal(){
+ const G=DATA&&DATA.global;if(!G){$("glob").innerHTML="";return}
+ const arrow={ABOVE:"▲",BELOW:"▼",NONE:"–"},tvi=TFS.find(x=>x[0]===tf)[2];
+ $("glob").innerHTML=Object.entries(G).map(([k,g])=>{
+  const r=g.tf[tf];
+  const head=`<div class="gh"><b>${k} · ${esc(g.label)}</b><small>${g.ticker?esc(g.ticker):"no data"} · updated ${DATA.global_at?ago(DATA.global_at):""}</small></div>`;
+  const body=r?`<div class="gm"><a class="px" target="_blank" href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(g.tv)}&interval=${tvi}">${fmt(r.c)}</a>
+   <span class="tag ${r.side}">${r.side==="NONE"?"NO SIGNAL":r.side}${r.f&&r.side!=="NONE"?" · FRESH":""}</span>
+   <span>EMA 44 <i>${fmt(r.e)}</i></span><span>Body ${r.c>=r.e?"above":"below"} <i>${fmt(r.b,1)}%</i></span>
+   <span>Dist <i class="${r.d>=0?"up":"dn"}">${fmt(r.d)}%</i></span><span>Candle <i>${esc(r.t)}</i></span></div>`
+   :`<div class="gm"><span>No data for this timeframe</span></div>`;
+  const chips=`<div class="chips">${TFS.map(([t,l])=>{const x=g.tf[t];const sd=x?x.side:"NONE";
+   return`<span class="chip ${sd}${t===tf?" on":""}" data-tf="${t}" title="${x?esc(x.t):"no data"}">${l} ${x?arrow[sd]:"?"}</span>`}).join("")}</div>`;
+  return`<div class="gc">${head}${body}${chips}</div>`}).join("");
+ document.querySelectorAll(".chip").forEach(c=>c.onclick=()=>{tf=c.dataset.tf;store.set("tf",tf);render()});
+}
 function current(){return DATA&&DATA.timeframes[tf]}
 function filtered(){const T=current();if(!T)return[];
  const q=$("q").value.trim().toLowerCase(),side=$("side").value,u=+$("uni").value,mb=+$("minBody").value||0,
@@ -119,12 +151,14 @@ function filtered(){const T=current();if(!T)return[];
 
 function render(){
  document.querySelectorAll(".tf").forEach(b=>b.classList.toggle("on",b.dataset.tf===tf));
+ document.querySelectorAll(".md").forEach(b=>b.classList.toggle("on",b.dataset.m===mode));
+ renderGlobal();
  const T=current();if(!T)return;
  const intraday=!["1D","1W"].includes(tf);
  $("uni").querySelector('option[value="3"]').disabled=intraday;
  if(intraday&&$("uni").value==="3")$("uni").value="2";
  const last=T.rows[0]?T.rows[0].t:"";
- $("sub").textContent=`${TFS.find(x=>x[0]===tf)[1]} · ${T.universe}: ${T.scanned} stocks scanned · scan at ${ist(T.computed_at)} IST (${ago(T.computed_at)})`+(last?` · last closed candle ${last}`:"");
+ $("sub").textContent=`${mode==="live"?"LIVE forming candle":"Closed candle"} · ${TFS.find(x=>x[0]===tf)[1]} · ${T.universe}: ${T.scanned} stocks scanned · scan at ${ist(T.computed_at)} IST (${ago(T.computed_at)})`+(last?` · candle ${last}`:"");
  const n=$("note"),age=(Date.now()-new Date(DATA.generated_at))/60000,
   nowIst=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Kolkata"})),
   mins=nowIst.getHours()*60+nowIst.getMinutes(),open=nowIst.getDay()>0&&nowIst.getDay()<6&&mins>=555&&mins<=935;
