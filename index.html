@@ -68,14 +68,14 @@ a{color:var(--acc);text-decoration:none}.name{color:var(--mute);font-size:12px;m
  <label>Min price ₹ <input id="minPx" type="number" value="0" min="0" style="width:76px"></label>
  <label>Min volume <input id="minVol" type="number" value="0" min="0" step="10000" style="width:96px"></label>
  <label><input id="fresh" type="checkbox"> Fresh cross only</label>
- <label><input id="trend" type="checkbox"> EMA sloping with signal</label>
+ <label title="1 flat · 2 mild · 3 moderate · 4 strong · 5 very strong. Shows stocks whose EMA slopes at least this much in the direction of the signal.">Min slope <input id="minSlope" type="number" value="1" min="1" max="5" step="1" style="width:56px"> <span style="font-size:11px">(1 flat – 5 very strong)</span></label>
  <a href="#" id="csv">Download CSV</a>
 </div>
 <div class="note" id="note"></div>
 <div class="wrap"><table><thead><tr id="hdr"></tr></thead><tbody id="tb"></tbody></table></div>
 <div class="foot">
  <b>Closed</b> judges the last finished candle (final). <b>Live</b> judges the candle still forming — the same candle TradingView shows last — so it can change until that candle closes. <b>Rule:</b> the candle's close is beyond the 44 EMA with at least the minimum % of its body (|close − open|) on that side.
- <b>Fresh</b> = previous candle closed on the other side of the EMA. <b>EMA slope</b> = % change of the EMA over the last 5 candles.
+ <b>Fresh</b> = previous candle closed on the other side of the EMA. <b>Slope</b> = how steep the 44 EMA is: its move over the last 5 candles compared with the average candle size (14 candles), so the same scale works for every stock and timeframe — <b>1</b> flat · <b>2</b> mild · <b>3</b> moderate · <b>4</b> strong · <b>5</b> very strong; ▲/▼ is the direction. <b>Min slope</b> keeps stocks whose EMA slopes at least that much in the signal’s direction.
  <b>BTC &amp; XAU</b> always show their status (▲ above, ▼ below, – no signal); their candles use UTC days (00:00 UTC open), like TradingView. Gold uses Yahoo's XAUUSD feed, or COMEX gold futures (GC=F) if that is unavailable. Intraday timeframes cover Nifty 500 stocks; Daily and Weekly cover all NSE equities. Candles are anchored at 09:15 IST.
  Data: Yahoo Finance, updated by an automatic scan about every 5 minutes during market hours (GitHub can delay scheduled scans by a few minutes). Not investment advice.
  <span id="runlink"></span>
@@ -84,7 +84,7 @@ a{color:var(--acc);text-decoration:none}.name{color:var(--mute);font-size:12px;m
 const TFS=[["5m","5 min",5],["15m","15 min",15],["30m","30 min",30],["1h","1 hour",60],["75m","75 min",75],["1D","Daily","D"],["1W","Weekly","W"]];
 const REFRESH_MS=5*60*1000;
 const cols=[["s","Symbol"],["n","Company"],["side","Signal"],["c","Close"],["e","EMA 44"],["d","Dist %"],["b","Body beyond %"],
-["chg","Chg %"],["sl","EMA slope %"],["v","Volume"],["vx","Vol × avg"],["t","Candle"]];
+["chg","Chg %"],["lv","Slope"],["v","Volume"],["vx","Vol × avg"],["t","Candle"]];
 const $=id=>document.getElementById(id);
 const store={get(k,d){try{const v=localStorage.getItem("ema44."+k);return v==null?d:JSON.parse(v)}catch(e){return d}},
  set(k,v){try{localStorage.setItem("ema44."+k,JSON.stringify(v))}catch(e){}}};
@@ -102,7 +102,7 @@ document.querySelectorAll("th").forEach(th=>th.onclick=()=>{const k=th.dataset.k
 document.querySelectorAll(".kpi").forEach(k=>k.onclick=()=>{const s=k.dataset.side;
  if(s==="FRESH"){$("fresh").checked=!$("fresh").checked;$("side").value="ALL"}else{$("side").value=s;$("fresh").checked=false}render()});
 $("uni").value=store.get("uni","2");
-["q","side","uni","minBody","minPx","minVol","fresh","trend"].forEach(id=>$(id).addEventListener("input",()=>{store.set("uni",$("uni").value);render()}));
+["q","side","uni","minBody","minPx","minVol","fresh","minSlope"].forEach(id=>$(id).addEventListener("input",()=>{store.set("uni",$("uni").value);render()}));
 $("refresh").onclick=()=>load(true);
 document.querySelectorAll(".md").forEach(b=>b.onclick=()=>{mode=b.dataset.m;store.set("mode",mode);load(true)});
 const m=location.hostname.match(/^([^.]+)\.github\.io$/),repo=location.pathname.split("/")[1];
@@ -134,7 +134,7 @@ function renderGlobal(){
   const body=r?`<div class="gm"><a class="px" target="_blank" href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(g.tv)}&interval=${tvi}">${fmt(r.c)}</a>
    <span class="tag ${r.side}">${r.side==="NONE"?"NO SIGNAL":r.side}${r.f&&r.side!=="NONE"?" · FRESH":""}</span>
    <span>EMA 44 <i>${fmt(r.e)}</i></span><span>Body ${r.c>=r.e?"above":"below"} <i>${fmt(r.b,1)}%</i></span>
-   <span>Dist <i class="${r.d>=0?"up":"dn"}">${fmt(r.d)}%</i></span><span>Candle <i>${esc(r.t)}</i></span></div>`
+   <span>Dist <i class="${r.d>=0?"up":"dn"}">${fmt(r.d)}%</i></span><span title="1 flat · 2 mild · 3 moderate · 4 strong · 5 very strong">Slope <i class="${r.sl>=0?"up":"dn"}">${r.lv??"–"} ${r.sl>=0?"▲":"▼"}</i></span><span>Candle <i>${esc(r.t)}</i></span></div>`
    :`<div class="gm"><span>No data for this timeframe</span></div>`;
   const chips=`<div class="chips">${TFS.map(([t,l])=>{const x=g.tf[t];const sd=x?x.side:"NONE";
    return`<span class="chip ${sd}${t===tf?" on":""}" data-tf="${t}" title="${x?esc(x.t):"no data"}">${l} ${x?arrow[sd]:"?"}</span>`}).join("")}</div>`;
@@ -144,9 +144,9 @@ function renderGlobal(){
 function current(){return DATA&&DATA.timeframes[tf]}
 function filtered(){const T=current();if(!T)return[];
  const q=$("q").value.trim().toLowerCase(),side=$("side").value,u=+$("uni").value,mb=+$("minBody").value||0,
- mp=+$("minPx").value||0,mv=+$("minVol").value||0,fr=$("fresh").checked,trd=$("trend").checked;
+ mp=+$("minPx").value||0,mv=+$("minVol").value||0,fr=$("fresh").checked,ms=Math.min(5,Math.max(1,+$("minSlope").value||1));
  return T.rows.filter(r=>(side==="ALL"||r.side===side)&&r.u<=u&&r.b>=mb&&r.c>=mp&&r.v>=mv&&(!fr||r.f)
-  &&(!trd||(r.side==="ABOVE"?r.sl>0:r.sl<0))&&(!q||r.s.toLowerCase().includes(q)||String(r.n).toLowerCase().includes(q)))
+  &&(ms<=1||((r.lv||1)>=ms&&(r.side==="ABOVE"?r.sl>0:r.sl<0)))&&(!q||r.s.toLowerCase().includes(q)||String(r.n).toLowerCase().includes(q)))
  .sort((a,b)=>{const x=a[sortK],y=b[sortK];return(typeof x==="string"?x.localeCompare(y):(x??-1e18)-(y??-1e18))*sortD});}
 
 function render(){
@@ -173,7 +173,7 @@ function render(){
  <td><span class="name" title="${esc(r.n)}">${esc(r.n)}</span></td><td><span class="tag ${r.side}">${r.side}</span></td>
  <td>${fmt(r.c)}</td><td>${fmt(r.e)}</td><td class="${c}">${fmt(r.d)}</td>
  <td>${fmt(r.b,1)}<span class="meter"><i style="width:${r.b}%;background:var(--${c})"></i></span></td>
- <td class="${r.chg>=0?"up":"dn"}">${fmt(r.chg)}</td><td class="${r.sl>=0?"up":"dn"}">${fmt(r.sl)}</td>
+ <td class="${r.chg>=0?"up":"dn"}">${fmt(r.chg)}</td><td class="${r.sl>=0?"up":"dn"}" title="${fmt(r.sx)}× avg candle range · EMA ${fmt(r.sl)}% over 5 candles">${r.lv??"–"} ${r.sl>=0?"▲":"▼"}</td>
  <td>${fmt(r.v,0)}</td><td>${fmt(r.vx)}</td><td>${esc(r.t)}</td></tr>`}).join("")
  ||`<tr><td colspan="12" style="text-align:center;color:var(--mute);padding:24px">No stocks match these filters</td></tr>`;
  document.querySelectorAll("th").forEach(th=>th.textContent=cols.find(c=>c[0]===th.dataset.k)[1]+(th.dataset.k===sortK?(sortD<0?" ▼":" ▲"):""));

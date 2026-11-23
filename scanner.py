@@ -12,8 +12,13 @@ Two modes are published:
 
 Timeframes
   5m, 15m, 30m, 1h, 75m  -> Nifty 500 stocks (built from Yahoo 5-minute data)
-  1D, 1W                 -> all NSE equities (10 years of daily history, so the EMA matches TradingView)
+  1D, 1W                 -> all NSE equities (1 year of daily candles; 5 years of weekly candles so the
+                            weekly EMA has enough history to match TradingView)
 Plus BTC and XAU (gold) on every timeframe.
+
+Slope level (1-5): how steep the EMA is, measured as the EMA's move over the last 5 candles
+divided by the average candle range (ATR 14), so the same scale works for every stock and timeframe.
+  1 flat (< 0.1x)   2 mild (< 0.3x)   3 moderate (< 0.6x)   4 strong (< 1.0x)   5 very strong
 """
 import argparse
 import datetime as dt
@@ -34,6 +39,7 @@ MIN_BODY = 50.0
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR = os.path.join(HERE, "cache")
 INTRADAY = {"5m": 5, "15m": 15, "30m": 30, "1h": 60, "75m": 75}
+SLOPE_LEVELS = (0.1, 0.3, 0.6, 1.0)  # upper bounds of levels 1-4 in "x ATR"; edit to taste
 LIVE_DW_EVERY_MIN = 10          # refresh live Daily/Weekly for all NSE at most this often
 NSE = "https://archives.nseindia.com/content"
 SOURCES = {
@@ -42,8 +48,8 @@ SOURCES = {
     "n50": (f"{NSE}/indices/ind_nifty50list.csv", "ind_nifty50list.csv"),
 }
 GLOBAL = {
-    "BTC": {"label": "Bitcoin", "tickers": ["BTC-USD"], "tv": "BITSTAMP:BTCUSD"},
-    "XAU": {"label": "Gold", "tickers": ["XAUUSD=X", "GC=F"], "tv": "OANDA:XAUUSD"},
+    "BTC": {"label": "Bitcoin", "tickers": ["BTC-USD"], "tv": "BITSTAMP:BTCUSD", "week_days": 7},
+    "XAU": {"label": "Gold", "tickers": ["XAUUSD=X", "GC=F"], "tv": "OANDA:XAUUSD", "week_days": 5},
 }
 
 
@@ -91,10 +97,25 @@ def load_universe():
 
 
 # ------------------------------------------------------------------ rule
-def judge(o, h, l, c, e, pc, pe, e5, vol, avg):
+def num(x):
+    try:
+        x = float(x)
+        return 0.0 if x != x else x          # NaN -> 0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def slope_level(x):
+    for i, bound in enumerate(SLOPE_LEVELS):
+        if x < bound:
+            return i + 1
+    return 5
+
+
+def judge(o, h, l, c, e, pc, pe, e5, vol, avg, atr):
     """Applies the 44-EMA body rule to one candle. side is ABOVE, BELOW or NONE."""
-    o, h, l, c, e, pc, pe, e5 = (float(x) for x in (o, h, l, c, e, pc, pe, e5))
-    vol, avg = float(vol or 0), float(avg or 0)
+    o, h, l, c, e, pc, pe, e5, vol, avg, atr = (num(x) for x in (o, h, l, c, e, pc, pe, e5, vol, avg, atr))
+    sx = abs(e - e5) / atr if atr else 0.0
     body = abs(c - o)
     top, bot = max(o, c), min(o, c)
     above = max(0.0, top - max(bot, e)) / body * 100 if body else 0.0
@@ -112,8 +133,17 @@ def judge(o, h, l, c, e, pc, pe, e5, vol, avg):
         "chg": round((c - pc) / pc * 100, 2) if pc else 0,
         "f": (side == "ABOVE" and pc <= pe) or (side == "BELOW" and pc >= pe),
         "sl": round((e - e5) / e5 * 100, 2) if e5 else 0,
-        "v": int(vol or 0), "vx": round(vol / avg, 2) if avg else None,
+        "sx": round(sx, 2), "lv": slope_level(sx),
+        "v": int(vol), "vx": round(vol / avg, 2) if avg else None,
     }
+
+
+def atr14(bars):
+    """Average true range of the last 14 candles."""
+    h, l, c = bars["High"], bars["Low"], bars["Close"]
+    pc = c.shift(1)
+    tr = pd.concat([h - l, (h - pc).abs(), (l - pc).abs()], axis=1).max(axis=1)
+    return float(tr.iloc[-14:].mean())
 
 
 def metrics(bars):
@@ -126,7 +156,7 @@ def metrics(bars):
     vol = bars["Volume"].fillna(0) if "Volume" in bars else pd.Series(0, index=bars.index)
     return judge(float(last.Open), float(last.High), float(last.Low), float(last.Close),
                  float(ema.iloc[-1]), float(bars["Close"].iloc[-2]), float(ema.iloc[-2]),
-                 float(ema.iloc[-6]), float(vol.iloc[-1]), float(vol.iloc[-21:-1].mean()))
+                 float(ema.iloc[-6]), float(vol.iloc[-1]), float(vol.iloc[-21:-1].mean()), atr14(bars))
 
 
 def ema_state(bars):
@@ -137,17 +167,23 @@ def ema_state(bars):
     ema = bars["Close"].ewm(span=EMA_LEN, adjust=False).mean()
     vol = bars["Volume"].fillna(0) if "Volume" in bars else pd.Series(0, index=bars.index)
     return {"e": float(ema.iloc[-1]), "c": float(bars["Close"].iloc[-1]), "e5": float(ema.iloc[-5]),
-            "av": float(vol.iloc[-20:].mean()), "last": bars.index[-1].strftime("%Y-%m-%d")}
+            "av": num(vol.iloc[-20:].mean()), "atr": atr14(bars), "last": bars.index[-1].strftime("%Y-%m-%d")}
 
 
 def judge_next(st, o, h, l, c, vol):
     """Judges a forming candle that follows the state's last completed candle."""
     e = st["e"] + ALPHA * (c - st["e"])
-    return judge(o, h, l, c, e, st["c"], st["e"], st["e5"], vol, st["av"])
+    return judge(o, h, l, c, e, st["c"], st["e"], st["e5"], vol, st["av"], st.get("atr", 0))
 
 
 def keep(r):
     return r is not None and r["side"] != "NONE"
+
+
+def evaluate(bars):
+    """Stock rule: the metrics, only when the candle qualifies ABOVE or BELOW."""
+    r = metrics(bars)
+    return r if keep(r) else None
 
 
 # ------------------------------------------------------------------ data
@@ -213,6 +249,17 @@ def resample_intraday(d5, minutes, open_at=pd.Timedelta(hours=9, minutes=15),
     return out
 
 
+def weekly_bars(w):
+    """Yahoo weekly candles -> one row per week labelled by its Monday (merges any split rows)."""
+    w = as_dates(w.dropna(subset=["Close"]))
+    mon = w.index - pd.to_timedelta(w.index.weekday, unit="D")
+    g = w.groupby(mon)
+    out = pd.DataFrame({"Open": g["Open"].first(), "High": g["High"].max(), "Low": g["Low"].min(),
+                        "Close": g["Close"].last(), "Volume": g["Volume"].sum()})
+    out.index.name = None
+    return out
+
+
 def weekly(dd):
     """Daily bars (naive dates) -> weekly bars labelled by Monday; 'wend' is the week's Friday."""
     w = dd.resample("W-FRI").agg({"Open": "first", "High": "max", "Low": "min",
@@ -265,39 +312,47 @@ def scan_intraday(symbols, names, tier):
 
 # ------------------------------------------------------------------ NSE daily / weekly (all NSE)
 def scan_daily(symbols, names, tier):
-    """Closed Daily and Weekly candles from 10 years of history, plus the EMA state for live mode."""
+    """Closed Daily (1 year of daily candles) and Weekly (5 years of weekly candles) + EMA state for live mode."""
     now = now_ist()
     res = {"1D": [], "1W": []}
     state = {}
     scanned = failed = 0
-    for s, d in download(symbols, interval="1d", period="10y"):
+    for s, d in download(symbols, interval="1d", period="1y"):
         scanned += 1
         try:
             d = as_dates(in_tz(d, IST).dropna(subset=["Close"]))
             if len(d) and d.index[-1].date() == now.date() and now.time() < dt.time(15, 30):
                 d = d.iloc[:-1]                                           # today's candle still open
-            info = dict(s=s, n=names.get(s, s), u=tier.get(s, 3))
-            st = {"D": ema_state(d)}
-            r = metrics(d)
-            if keep(r):
-                r.update(info, t=d.index[-1].strftime("%d %b %Y"))
+            st = ema_state(d)
+            if st:
+                state[s] = {"D": st}
+            r = evaluate(d)
+            if r:
+                r.update(s=s, n=names.get(s, s), u=tier.get(s, 3), t=d.index[-1].strftime("%d %b %Y"))
                 res["1D"].append(r)
-            w = weekly(d)
-            if len(w) and not week_closed(w["wend"].iloc[-1], now):
-                p = w.iloc[-1]                                            # this week so far
-                st["P"] = {"o": float(p.Open), "h": float(p.High), "l": float(p.Low), "c": float(p.Close),
-                           "v": float(p.Volume), "wk": w.index[-1].strftime("%Y-%m-%d")}
-                w = w.iloc[:-1]
-            st["W"] = ema_state(w)
-            r = metrics(w)
-            if keep(r):
-                r.update(info, t="wk of " + w.index[-1].strftime("%d %b"))
-                res["1W"].append(r)
-            if st["D"] and st["W"]:
-                state[s] = st
         except Exception as ex:
             failed += 1
-            print(f"  {s}: {ex}")
+            print(f"  {s} daily: {ex}")
+    for s, w in download(symbols, interval="1wk", period="5y"):
+        try:
+            w = weekly_bars(in_tz(w, IST))
+            st = state.get(s)
+            if not len(w) or st is None:
+                continue
+            if not week_closed(w.index[-1] + pd.Timedelta(days=4), now):
+                p = w.iloc[-1]                                            # this week so far
+                st["P"] = {"o": num(p.Open), "h": num(p.High), "l": num(p.Low), "c": num(p.Close),
+                           "v": num(p.Volume), "wk": w.index[-1].strftime("%Y-%m-%d")}
+                w = w.iloc[:-1]
+            st["W"] = ema_state(w)
+            r = evaluate(w)
+            if r:
+                r.update(s=s, n=names.get(s, s), u=tier.get(s, 3), t="wk of " + w.index[-1].strftime("%d %b"))
+                res["1W"].append(r)
+        except Exception as ex:
+            failed += 1
+            print(f"  {s} weekly: {ex}")
+    state = {s: st for s, st in state.items() if st.get("D") and st.get("W")}
     return res, state, {"scanned": scanned, "requested": len(symbols), "failed": failed}
 
 
@@ -324,8 +379,7 @@ def live_daily_weekly(state, closed_res, names, tier, fetch_today):
         is_new = t is not None and st["D"]["last"] < now.strftime("%Y-%m-%d")
         # Daily
         if is_new:
-            r = judge_next(st["D"], float(t.Open), float(t.High), float(t.Low), float(t.Close),
-                           float(t.Volume or 0))
+            r = judge_next(st["D"], num(t.Open), num(t.High), num(t.Low), num(t.Close), num(t.Volume))
             if keep(r):
                 r.update(info, t=now.strftime("%d %b %Y") + " · live")
                 out["1D"].append(r)
@@ -335,10 +389,10 @@ def live_daily_weekly(state, closed_res, names, tier, fetch_today):
         p = st.get("P") if (st.get("P") or {}).get("wk") == monday else None
         if p or is_new:
             o, h, l, c, v = (p["o"], p["h"], p["l"], p["c"], p["v"]) if p else \
-                (float(t.Open), float(t.High), float(t.Low), float(t.Close), 0.0)
+                (num(t.Open), num(t.High), num(t.Low), num(t.Close), 0.0)
             if is_new:
-                h, l, c = max(h, float(t.High)), min(l, float(t.Low)), float(t.Close)
-                v += float(t.Volume or 0)
+                h, l, c = max(h, num(t.High)), min(l, num(t.Low)), num(t.Close)
+                v += num(t.Volume)
             r = judge_next(st["W"], o, h, l, c, v)
             if keep(r):
                 r.update(info, t="wk of " + pd.Timestamp(monday).strftime("%d %b") + " · live")
@@ -383,34 +437,25 @@ def scan_global():
                         if r:
                             r["t"] = bars.index[-1].strftime("%d %b %H:%M") + " UTC"
                         item["closed"][tf] = r
-            td, dd = _fetch_one(cfg["tickers"], interval="1d", period="10y")
+            td, dd = _fetch_one(cfg["tickers"], interval="1d", period="1y")
             if dd is not None:
                 item["ticker"] = item["ticker"] or td
                 dd = as_dates(dd.dropna(subset=["Close"]))
-                today = now.date()
-                forming = len(dd) and dd.index[-1].date() >= today
-                r = metrics(dd)
-                if r:
-                    r["t"] = dd.index[-1].strftime("%d %b %Y")
-                item["live"]["1D"] = r
-                cd = dd.iloc[:-1] if forming else dd
-                r = metrics(cd)
-                if r:
-                    r["t"] = cd.index[-1].strftime("%d %b %Y")
-                item["closed"]["1D"] = r
-                w = dd.resample("W-SUN").agg({"Open": "first", "High": "max", "Low": "min",
-                                              "Close": "last", "Volume": "sum"}).dropna(subset=["Close"])
-                week_open = len(w) and now.replace(tzinfo=None) < w.index[-1] + pd.Timedelta(days=1)
-                w.index = w.index - pd.Timedelta(days=6)                  # label weeks by Monday
-                r = metrics(w)
-                if r:
-                    r["t"] = "wk of " + w.index[-1].strftime("%d %b")
-                item["live"]["1W"] = r
-                cw = w.iloc[:-1] if week_open else w
-                r = metrics(cw)
-                if r:
-                    r["t"] = "wk of " + cw.index[-1].strftime("%d %b")
-                item["closed"]["1W"] = r
+                forming = len(dd) and dd.index[-1].date() >= now.date()
+                for mode, bars in (("live", dd), ("closed", dd.iloc[:-1] if forming else dd)):
+                    r = metrics(bars)
+                    if r:
+                        r["t"] = bars.index[-1].strftime("%d %b %Y")
+                    item[mode]["1D"] = r
+            tw, wk = _fetch_one(cfg["tickers"], interval="1wk", period="5y")
+            if wk is not None:
+                w = weekly_bars(wk)
+                week_open = len(w) and now.replace(tzinfo=None) < w.index[-1] + pd.Timedelta(days=cfg["week_days"])
+                for mode, bars in (("live", w), ("closed", w.iloc[:-1] if week_open else w)):
+                    r = metrics(bars)
+                    if r:
+                        r["t"] = "wk of " + bars.index[-1].strftime("%d %b")
+                    item[mode]["1W"] = r
         except Exception as ex:
             print(f"  {key}: {ex}")
         out[key] = item
@@ -465,10 +510,10 @@ def main():
 
     # Closed Daily / Weekly change once a day: reuse until the next close
     daily = None if args.force else load_cache("daily.json")
-    if not daily or daily.get("v") != 2 or daily["computed_at"] < last_cutoff(now, 15, 45).isoformat():
-        print("Scanning daily/weekly (10y history) ...")
+    if not daily or daily.get("v") != 3 or daily["computed_at"] < last_cutoff(now, 15, 45).isoformat():
+        print("Scanning daily (1y) / weekly (5y) ...")
         r, st, m = scan_daily(all_syms, names, tier)
-        daily = {"v": 2, "computed_at": now.isoformat(), "res": r, "state": st, "meta": m}
+        daily = {"v": 3, "computed_at": now.isoformat(), "res": r, "state": st, "meta": m}
         save_cache("daily.json", daily)
     else:
         print("Closed daily/weekly unchanged since last close, reusing")
@@ -479,23 +524,31 @@ def main():
         market_open(now) and ldw["computed_at"] < (now - dt.timedelta(minutes=LIVE_DW_EVERY_MIN - 1)).isoformat())
     if stale:
         print("Building live daily/weekly ...")
-        res = live_daily_weekly(daily["state"], daily["res"], names, tier, fetch_today=market_open(now))
+        try:
+            res = live_daily_weekly(daily["state"], daily["res"], names, tier, fetch_today=market_open(now))
+        except Exception as ex:                       # never lose the whole scan over live mode
+            print(f"  live daily/weekly failed, showing closed candles instead: {ex}")
+            res = daily["res"]
         ldw = {"computed_at": now.isoformat(), "base": daily["computed_at"], "res": res}
         save_cache("live_dw.json", ldw)
 
     # Intraday: rescan during market hours, otherwise reuse the final scan of the day
     intra = None if args.force else load_cache("intraday.json")
-    if market_open(now) or not intra or intra.get("v") != 2 or \
+    if market_open(now) or not intra or intra.get("v") != 3 or \
             intra["computed_at"] < last_cutoff(now, 15, 35).isoformat():
         print("Scanning intraday ...")
         c, l, m = scan_intraday(intraday_syms, names, tier)
-        intra = {"v": 2, "computed_at": now.isoformat(), "closed": c, "live": l, "meta": m}
+        intra = {"v": 3, "computed_at": now.isoformat(), "closed": c, "live": l, "meta": m}
         save_cache("intraday.json", intra)
     else:
         print("Market closed, reusing last intraday scan")
 
     print("Scanning BTC / XAU ...")
-    glob = scan_global()
+    try:
+        glob = scan_global()
+    except Exception as ex:
+        print(f"  BTC/XAU failed: {ex}")
+        glob = {}
 
     os.makedirs(args.out, exist_ok=True)
     for mode, fname in (("closed", "data.json"), ("live", "live.json")):
